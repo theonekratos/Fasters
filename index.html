@@ -506,6 +506,23 @@ function updateSecureUI(){
 }
 
 async function probeModalities(){
+    // SAFARI: motion permission must be requested inside user gesture
+  if (typeof DeviceMotionEvent !== "undefined" &&
+      typeof DeviceMotionEvent.requestPermission === "function") {
+    try {
+      const response = await DeviceMotionEvent.requestPermission();
+      if (response === "granted") {
+        console.log("Motion access granted");
+        state.modalities.notes.push("motion/orientation access granted");
+      } else {
+        console.log("Motion access denied");
+        state.modalities.notes.push("motion/orientation access denied");
+      }
+    } catch (err) {
+      console.error(err);
+      state.modalities.notes.push("motion/orientation request failed");
+    }
+  }
   state.modalities.requested.depth = $("reqDepth").checked;
   state.modalities.requested.ir = $("reqIR").checked;
   state.modalities.requested.pol = $("reqPol").checked;
