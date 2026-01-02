@@ -256,7 +256,49 @@ function secureContextHint(){
 if (window.isSecureContext) return "";
 return "Camera may require https or localhost on your device.";
 }
-async function startCamera(){camMsg.textContent = secureContextHint();
+async function startCameraIOS() {
+  const video = document.getElementById("camView");
+
+  // Stop any existing stream
+  if (video.srcObject) {
+    video.srcObject.getTracks().forEach(t => t.stop());
+    video.srcObject = null;
+  }
+
+  try {
+    // Force rear camera first
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { exact: "environment" } },
+      audio: false
+    });
+    attachStream(video, stream);
+  } catch (e1) {
+    try {
+      // Relaxed rear camera request
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment" },
+        audio: false
+      });
+      attachStream(video, stream);
+    } catch (e2) {
+      // Fallback to front camera
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false
+      });
+      attachStream(video, stream);
+    }
+  }
+}
+
+function attachStream(video, stream) {
+  video.srcObject = stream;
+  video.muted = true;
+  video.playsInline = true;
+  video.setAttribute("playsinline", "");
+  video.style.display = "block";
+  video.play();
+}
 try{
 const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio:fals
 state.cam.stream = stream;
@@ -926,5 +968,9 @@ renderPanels();
 renderAudit();
 })();
 </script>
-</body>
+</body><button onclick="startCameraIOS()" style="padding:10px;font-size:16px;">
+  Start Camera
+</button>
+
+<video id="camView" autoplay muted playsinline style="width:100%;background:black;"></video>
 </html>
