@@ -35,6 +35,16 @@ video{width:100%;height:auto;border-radius:12px;background:#000}
 <h1>Truth Engine Mobile</h1>
 <div class="small">Local only. No network calls. Assist drafts never become truth until you approve. Modalities are declared only after your request and the capability probe.</div>
 
+<div class="item" style="margin-top:10px">
+  <div class="itemHead">
+    <div>
+      <span class="pill">Safari status</span>
+      <span class="pill mono" id="secStatus">checking</span>
+    </div>
+  </div>
+  <div id="secBox" class="tiny muted"></div>
+</div>
+
 <div class="row">
   <div class="card left">
 
@@ -111,8 +121,8 @@ video{width:100%;height:auto;border-radius:12px;background:#000}
       <div class="itemHead">
         <div>
           <span class="pill">Camera input</span>
-          <span class="pill">Best effort live</span>
-          <span class="pill">Reliable capture</span>
+          <span class="pill">Live</span>
+          <span class="pill">Capture</span>
         </div>
       </div>
 
@@ -122,7 +132,7 @@ video{width:100%;height:auto;border-radius:12px;background:#000}
         <button id="camGrabBtn" disabled>Capture frame</button>
 
         <input id="camFileInput" type="file" accept="image/*" capture="environment" style="display:none"/>
-        <button id="camFileBtn" type="button">Open camera reliable</button>
+        <button id="camFileBtn" type="button">Open camera capture</button>
 
         <button id="swapCamBtn" disabled>Swap camera</button>
       </div>
@@ -457,9 +467,42 @@ $("imgInput").addEventListener("change", (e) => {
   stopLiveCamera();
 });
 
-function secureContextHint(){
-  if (window.isSecureContext) return "";
-  return "Camera usually requires https or localhost.";
+function isSafari(){
+  const ua = navigator.userAgent;
+  const isIOS = /iPad|iPhone|iPod/.test(ua);
+  const isWebKit = /WebKit/.test(ua);
+  const isChromeIOS = /CriOS/.test(ua);
+  const isFirefoxIOS = /FxiOS/.test(ua);
+  return (isIOS && isWebKit && !isChromeIOS && !isFirefoxIOS) || (/Safari/.test(ua) && /Apple/.test(navigator.vendor) && !/Chrome/.test(ua));
+}
+
+function updateSecureUI(){
+  const sec = window.isSecureContext;
+  const hasMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  const okLive = sec && hasMedia;
+
+  $("secStatus").textContent = okLive ? "live camera allowed" : "live camera blocked";
+  const reasons = [];
+  if(!sec) reasons.push("This page is not a secure context. Live camera needs https or localhost.");
+  if(!hasMedia) reasons.push("mediaDevices getUserMedia is unavailable in this browser.");
+  const safariLine = isSafari() ? "Safari detected." : "Non Safari browser detected.";
+  const rec = okLive
+    ? "You can use Start live."
+    : "Use Open camera capture, or host on GitHub Pages with https.";
+
+  $("secBox").innerHTML = `
+    <div class="${okLive ? "boxGood" : "boxWarn"}">
+      <div class="tiny"><b>${esc(safariLine)}</b></div>
+      ${reasons.length ? `<div class="tiny">${esc(reasons.join(" "))}</div>` : `<div class="tiny">Secure context and camera API look available.</div>`}
+      <div class="tiny muted">${esc(rec)}</div>
+    </div>
+  `;
+
+  $("camStartBtn").disabled = !okLive;
+  if(!okLive){
+    $("tempStartBtn").disabled = true;
+    $("swapCamBtn").disabled = true;
+  }
 }
 
 async function probeModalities(){
@@ -476,22 +519,17 @@ async function probeModalities(){
 
   const hasMedia = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
   state.modalities.available.camera = hasMedia && window.isSecureContext;
-  if(!window.isSecureContext) notes.push("not secure context: camera may fail");
+  if(!window.isSecureContext) notes.push("not secure context, live camera will be blocked");
   if(!hasMedia) notes.push("mediaDevices not available");
 
-  // Depth sensing on web is not reliably exposed on iOS Safari
-  // We treat depth as unavailable unless your environment provides explicit APIs
   state.modalities.available.depth = false;
-  notes.push("depth sensing: not exposed in typical iOS web pages");
+  notes.push("depth sensing is not exposed in typical iOS Safari web pages");
 
-  // IR and polarization are not exposed as direct modalities in standard web APIs
   state.modalities.available.ir = false;
-  notes.push("IR: not exposed in standard web APIs");
+  notes.push("IR is not exposed in standard web APIs");
   state.modalities.available.pol = false;
-  notes.push("polarization: not exposed in standard web APIs");
+  notes.push("polarization is not exposed in standard web APIs");
 
-  // Active probing: possible limited via torch constraint on some devices
-  let torchPossible = false;
   try{
     const devices = (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) ? await navigator.mediaDevices.enumerateDevices() : [];
     if(devices && devices.length) notes.push("devices enumerated");
@@ -499,10 +537,9 @@ async function probeModalities(){
     notes.push("devices enumeration blocked");
   }
 
-  // Torch requires a video track and applyConstraints, so we mark as unknown until camera starts
   state.modalities.available.active = false;
   state.modalities.available.torch = false;
-  notes.push("active probing: torch will be tested only after camera starts");
+  notes.push("active probing torch can only be tested after live camera starts");
 
   renderModalities();
   addAttempt("capability probe", "modalities probed", true, { requested: state.modalities.requested, available: state.modalities.available, notes });
@@ -541,17 +578,15 @@ function renderModalities(){
 $("probeBtn").addEventListener("click", probeModalities);
 
 async function startLiveCamera(){
-  camMsg.textContent = "Starting live camera. " + secureContextHint();
-  addAttempt("camera", "start requested", true, { facing: state.cam.facing });
-
-  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
-    camMsg.textContent = "Camera API not available.";
-    addAttempt("camera", "mediaDevices missing", false, {});
+  updateSecureUI();
+  if($("camStartBtn").disabled){
+    camMsg.textContent = "Live camera is blocked here. Use Open camera capture, or host this page on https.";
+    addAttempt("camera", "start blocked by secure context check", false, {});
     return;
   }
-  if(!window.isSecureContext){
-    camMsg.textContent = "Not secure context. Camera may fail.";
-  }
+
+  camMsg.textContent = "Starting live camera.";
+  addAttempt("camera", "start requested", true, { facing: state.cam.facing });
 
   try{
     const constraints = { video:{ facingMode: state.cam.facing }, audio:false };
@@ -572,7 +607,6 @@ async function startLiveCamera(){
 
     camMsg.textContent = "Live camera active. Capture frame or run temporal sampling.";
 
-    // Verify torch capability if requested active probing
     if(state.modalities.probed && state.modalities.requested.active){
       try{
         const track = stream.getVideoTracks()[0];
@@ -591,7 +625,7 @@ async function startLiveCamera(){
     }
 
   }catch(err){
-    camMsg.textContent = "Camera error: " + err.message + " " + secureContextHint();
+    camMsg.textContent = "Camera error: " + err.message;
     addAttempt("camera", "start failed: " + err.message, false, {});
     alert(camMsg.textContent);
   }
@@ -608,10 +642,9 @@ function stopLiveCamera(){
   camView.srcObject = null;
   camView.style.display = "none";
 
-  $("camStartBtn").disabled = false;
+  updateSecureUI();
   $("camStopBtn").disabled = true;
   $("camGrabBtn").disabled = true;
-  $("swapCamBtn").disabled = true;
 
   $("tempStartBtn").disabled = true;
   $("tempStopBtn").disabled = true;
@@ -650,8 +683,8 @@ $("camFileInput").addEventListener("change", (e)=>{
   const f = e.target.files && e.target.files[0];
   if(!f) return;
   const url = URL.createObjectURL(f);
-  loadImage(url, "camera reliable", null, null);
-  addAttempt("camera", "reliable capture used", true, {});
+  loadImage(url, "camera capture", null, null);
+  addAttempt("camera", "capture used", true, {});
 });
 
 function fit(){
@@ -920,8 +953,6 @@ function drawDeltaOverlay(){
 
   function done(){
     if(loaded !== 2) return;
-    const w = state.signal.w || tmpA.naturalWidth;
-    const h = state.signal.h || tmpA.naturalHeight;
 
     const c = document.createElement("canvas");
     c.width = 360;
@@ -1317,7 +1348,6 @@ $("snapBtn").addEventListener("click", ()=>{
   const dataUrl = state.signal.dataUrl;
 
   if(!dataUrl){
-    // If signal was a blob url upload, we redraw into canvas to preserve
     workCanvas.width = state.signal.w;
     workCanvas.height = state.signal.h;
     wctx.drawImage(img,0,0);
@@ -1395,7 +1425,6 @@ $("importBtn").addEventListener("click", ()=>{
         $("reqActive").checked = !!state.modalities.requested.active;
         renderModalities();
 
-        // Signal image is intentionally not restored from JSON
         state.signal.loaded = false;
         state.signal.source = "none";
         state.signal.timestamp = obj.signal?.timestamp || null;
@@ -1455,6 +1484,7 @@ $("resetBtn").addEventListener("click", ()=>{
   renderAudit();
   updateMemorySelectors();
   renderAttempts();
+  updateSecureUI();
   addAttempt("reset", "system reset", true, {});
 });
 
@@ -1474,13 +1504,10 @@ function temporalStatFromVideo(){
   camGrabCanvas.height = camView.videoHeight;
   gctx.drawImage(camView, 0, 0);
 
-  // Use selection if available, else full
   const rect = state.selection || { x:0, y:0, w: camGrabCanvas.width, h: camGrabCanvas.height };
 
-  // Map selection from image space if selection exists and a signal is loaded
   let rx = 0, ry = 0, rw = camGrabCanvas.width, rh = camGrabCanvas.height;
   if(state.selection && state.signal.loaded){
-    // selection is in signal image space. We map proportionally to video capture dimensions
     const sx = rect.x / state.signal.w;
     const sy = rect.y / state.signal.h;
     const sw = rect.w / state.signal.w;
@@ -1521,16 +1548,12 @@ function updateTemporal(){
     const ds = Math.abs(s.std - t.last.std);
     const delta = dm + ds;
 
-    // Information gain proxy: change that persists across samples
-    // Low delta across time suggests invariance, or occlusion, or stable scene
     t.infoGain = 0.85 * t.infoGain + 0.15 * delta;
 
-    // Resistance: attempts divided by information gain with safe floor
     const attempts = t.samples.length;
     const gain = Math.max(0.0001, t.infoGain);
     t.resistance = attempts / gain;
 
-    // UI message
     let msg = "";
     if(delta < 0.6){
       msg = "Invariance detected. Region resisted change under current motion and time.";
@@ -1570,7 +1593,7 @@ function startTemporal(){
   addAttempt("temporal", "sampling started", true, {});
 }
 
-function stopTemporal(){
+function stopTemporalSampling(){
   if(state.temporal.timer) clearInterval(state.temporal.timer);
   state.temporal.timer = null;
   state.temporal.running = false;
@@ -1583,7 +1606,7 @@ function stopTemporal(){
 }
 
 $("tempStartBtn").addEventListener("click", startTemporal);
-$("tempStopBtn").addEventListener("click", stopTemporal);
+$("tempStopBtn").addEventListener("click", stopTemporalSampling);
 
 $("tempCommitBtn").addEventListener("click", ()=>{
   const t = state.temporal;
@@ -1609,7 +1632,6 @@ $("tempCommitBtn").addEventListener("click", ()=>{
     at: nowIso()
   });
 
-  // If invariance is high resistance, also add an Unknown suggestion as a Path or Unknown
   if(t.resistance > 40 && t.infoGain < 0.3){
     const uid = crypto.randomUUID();
     state.panels.Unknown.push({
@@ -1649,6 +1671,7 @@ function runInit(){
   renderAttempts();
   updateMemorySelectors();
   renderModalitiesIfNeeded();
+  updateSecureUI();
 }
 runInit();
 })();
